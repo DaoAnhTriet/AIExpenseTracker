@@ -1,0 +1,6 @@
+{
+  "name": "AI Expense Tracker",
+  "description": "Smart personal expense tracker with Gemini AI voice/text categorization and secure, real-time Firebase Cloud synchronization.",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

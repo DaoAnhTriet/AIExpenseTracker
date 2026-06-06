@@ -1,0 +1,56 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "User profile settings including total starting balance, currency, and monthly budget limit.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "total_balance": { "type": "number" },
+        "currency": { "type": "string" },
+        "monthly_budget": { "type": "number" }
+      },
+      "required": ["userId", "total_balance", "currency", "monthly_budget"]
+    },
+    "Transaction": {
+      "title": "Transaction",
+      "description": "Individual income or expense transaction records recorded by the user.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "date": { "type": "string" },
+        "amount": { "type": "number" },
+        "category": { "type": "string" },
+        "note": { "type": "string" },
+        "type": { "type": "string", "enum": ["expense", "income"] }
+      },
+      "required": ["id", "date", "amount", "category", "note", "type"]
+    },
+    "Goal": {
+      "title": "Goal",
+      "description": "A financial savings/accumulative target goal configured by the user.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "target": { "type": "number" },
+        "current": { "type": "number" }
+      },
+      "required": ["id", "name", "target", "current"]
+    }
+  },
+  "firestore": {
+    "users/{userId}": {
+      "schema": "UserProfile",
+      "description": "Main user settings and base profile balance"
+    },
+    "users/{userId}/transactions/{transactionId}": {
+      "schema": "Transaction",
+      "description": "All income and expense transactions for this user"
+    },
+    "users/{userId}/goals/{goalId}": {
+      "schema": "Goal",
+      "description": "Saving target goals configured by this user"
+    }
+  }
+}
