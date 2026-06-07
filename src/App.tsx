@@ -14,7 +14,9 @@ import {
   LogOut,
   RefreshCw,
   User as UserIcon,
-  CloudLightning
+  CloudLightning,
+  ExternalLink,
+  Info
 } from "lucide-react";
 import { onAuthStateChanged, signInWithPopup, GoogleAuthProvider, signOut, User } from "firebase/auth";
 import { doc, setDoc, deleteDoc, collection, onSnapshot, getDocFromServer } from "firebase/firestore";
@@ -64,6 +66,9 @@ export default function App() {
   const [isRecording, setIsRecording] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
   const [notification, setNotification] = useState<{ text: string; type: "success" | "error" | "info" } | null>(null);
+  const [popupError, setPopupError] = useState(false);
+
+  const isInIframe = typeof window !== "undefined" && window.self !== window.top;
 
   const recognitionRef = useRef<any>(null);
 
@@ -282,10 +287,22 @@ export default function App() {
     const provider = new GoogleAuthProvider();
     try {
       setIsSyncing(true);
+      setPopupError(false); // Reset any prior popup block state
       await signInWithPopup(auth, provider);
     } catch (err: any) {
       console.error("Sign-In popup failed:", err);
-      showToast(`Đăng nhập thất bại: ${err.message}`, "error");
+      const isPopupBlocked = 
+        err.code === "auth/popup-blocked" || 
+        err.message?.includes("popup-blocked") || 
+        err.message?.includes("popup") ||
+        err.code?.includes("popup");
+      
+      if (isPopupBlocked) {
+        setPopupError(true);
+        showToast("Cửa sổ đăng nhập bị chặn bởi trình duyệt!", "error");
+      } else {
+        showToast(`Đăng nhập thất bại: ${err.message}`, "error");
+      }
     } finally {
       setIsSyncing(false);
     }
@@ -827,6 +844,83 @@ export default function App() {
         <p>© 2026 AI Expense Tracker - Secure Firebase Database with real-time sync.</p>
         <p className="font-mono text-[10px] text-slate-700">Powered by Gemini 3.5 & Google Developer Services</p>
       </footer>
+
+      {/* 5. Clean, Hardened Popup Blocker Troubleshooting Modal */}
+      {popupError && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/90 backdrop-blur-md animate-fade-in">
+          <div className="bg-slate-900 border border-indigo-500/20 shadow-2xl shadow-indigo-500/10 rounded-3xl max-w-lg w-full p-6 md:p-8 space-y-6 relative overflow-hidden">
+            
+            {/* Ambient background decoration */}
+            <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-500/5 rounded-full blur-3xl -mr-10 -mt-10"></div>
+            
+            <button 
+              onClick={() => setPopupError(false)}
+              className="absolute top-4 right-4 p-2 text-slate-550 hover:text-slate-300 bg-slate-950/40 hover:bg-slate-950/80 rounded-full border border-slate-800 transition cursor-pointer"
+              title="Đóng chỉ dẫn"
+            >
+              <X className="w-4 h-4" />
+            </button>
+
+            {/* Modal Icon and Header */}
+            <div className="flex flex-col items-center text-center space-y-4">
+              <div className="w-16 h-16 rounded-2xl bg-indigo-500/10 text-indigo-400 flex items-center justify-center border border-indigo-500/20 shadow-lg shadow-indigo-500/5">
+                <Lock className="w-8 h-8 animate-pulse text-indigo-300" />
+              </div>
+              
+              <div className="space-y-1.5">
+                <h3 className="text-lg font-extrabold tracking-tight text-white">
+                  Cửa Sổ Đăng Nhập Bị Trình Duyệt Chặn
+                </h3>
+                <p className="text-xs text-indigo-400 font-bold uppercase tracking-widest font-mono">
+                  POPUP BLOCKED DETECTED
+                </p>
+              </div>
+            </div>
+
+            {/* Modal Explanatory Content */}
+            <div className="text-xs text-slate-300 leading-relaxed space-y-4 bg-slate-950/50 p-4 rounded-xl border border-slate-800">
+              <p>
+                Bạn đang trải nghiệm ứng dụng từ trong khung mô phỏng bảo mật (iFrame) của Google AI Studio. Trình duyệt của bạn sẽ tự động chặn các popup bật lên để tránh lừa đảo giả mạo.
+              </p>
+              <p className="font-semibold text-indigo-300 flex items-start gap-1.5 pt-1.5">
+                <Info className="w-4 h-4 shrink-0 text-indigo-400 mt-0.5" />
+                <span>Bạn sẽ KHÔNG bị mất dữ liệu hiện tại khi mở ứng dụng ở tab mới. Toàn bộ thiết lập của bạn vẫn được giữ nguyên!</span>
+              </p>
+            </div>
+
+            {/* Action buttons */}
+            <div className="space-y-3">
+              <a
+                href={typeof window !== "undefined" ? window.location.href : "#"}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={() => setPopupError(false)}
+                className="w-full py-3.5 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-black transition flex items-center justify-center gap-2 border border-indigo-700/50 shadow-lg shadow-indigo-500/10 cursor-pointer text-center"
+              >
+                <span>Mở ứng dụng ở tab mới (Khuyên dùng)</span>
+                <ExternalLink className="w-4 h-4" />
+              </a>
+
+              <div className="py-2 text-[11px] text-slate-400 text-center border-t border-slate-850/60 font-medium">
+                Hoặc cho phép thủ công bằng cách click vào biểu tượng <span className="text-indigo-400 font-bold">Popup Blocked 🚫</span> ở góc phải thanh địa chỉ trình duyệt của bạn và chọn <span className="text-indigo-400 font-bold">Luôn cho phép (Always allow)</span>.
+              </div>
+
+              <div className="flex gap-2.5 pt-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPopupError(false);
+                  }}
+                  className="w-full py-2.5 px-4 text-[11px] text-slate-400 hover:text-slate-200 bg-slate-950 hover:bg-slate-900 border border-slate-850 text-center font-bold rounded-xl transition cursor-pointer"
+                >
+                  Bỏ qua & Tiếp tục dùng Ngoại tuyến
+                </button>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      )}
 
     </div>
   );
