@@ -22,6 +22,7 @@ import { onAuthStateChanged, signInWithPopup, GoogleAuthProvider, signOut, User 
 import { doc, setDoc, deleteDoc, collection, onSnapshot, getDocFromServer } from "firebase/firestore";
 import { Transaction, UserProfile, Goal } from "./types";
 import { auth, db, handleFirestoreError, OperationType } from "./firebase";
+import firebaseConfig from "../firebase-applet-config.json";
 import AIBuddyAvatar from "./components/AIBuddyAvatar";
 import BudgetGoalWidgets from "./components/BudgetGoalWidgets";
 import TransactionList from "./components/TransactionList";
@@ -67,6 +68,7 @@ export default function App() {
   const [isSyncing, setIsSyncing] = useState(false);
   const [notification, setNotification] = useState<{ text: string; type: "success" | "error" | "info" } | null>(null);
   const [popupError, setPopupError] = useState(false);
+  const [domainError, setDomainError] = useState(false);
 
   const isInIframe = typeof window !== "undefined" && window.self !== window.top;
 
@@ -288,6 +290,7 @@ export default function App() {
     try {
       setIsSyncing(true);
       setPopupError(false); // Reset any prior popup block state
+      setDomainError(false); // Reset prior domain authorization error
       await signInWithPopup(auth, provider);
     } catch (err: any) {
       console.error("Sign-In popup failed:", err);
@@ -297,7 +300,15 @@ export default function App() {
         err.message?.includes("popup") ||
         err.code?.includes("popup");
       
-      if (isPopupBlocked) {
+      const isUnauthorizedDomain =
+        err.code === "auth/unauthorized-domain" ||
+        err.message?.includes("unauthorized-domain") ||
+        err.message?.includes("unauthorized");
+
+      if (isUnauthorizedDomain) {
+        setDomainError(true);
+        showToast("Tên miền chưa được xác thực trong Firebase!", "error");
+      } else if (isPopupBlocked) {
         setPopupError(true);
         showToast("Cửa sổ đăng nhập bị chặn bởi trình duyệt!", "error");
       } else {
@@ -914,6 +925,90 @@ export default function App() {
                   className="w-full py-2.5 px-4 text-[11px] text-slate-400 hover:text-slate-200 bg-slate-950 hover:bg-slate-900 border border-slate-850 text-center font-bold rounded-xl transition cursor-pointer"
                 >
                   Bỏ qua & Tiếp tục dùng Ngoại tuyến
+                </button>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      )}
+
+      {/* 6. Clean, Hardened Unauthorized Domain Troubleshooting Modal */}
+      {domainError && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/90 backdrop-blur-md animate-fade-in">
+          <div className="bg-slate-900 border border-emerald-500/20 shadow-2xl shadow-emerald-500/10 rounded-3xl max-w-lg w-full p-6 md:p-8 space-y-6 relative overflow-hidden">
+            
+            {/* Ambient background decoration */}
+            <div className="absolute top-0 right-0 w-32 h-32 bg-emerald-500/5 rounded-full blur-3xl -mr-10 -mt-10"></div>
+            
+            <button 
+              onClick={() => setDomainError(false)}
+              className="absolute top-4 right-4 p-2 text-slate-550 hover:text-slate-300 bg-slate-950/40 hover:bg-slate-950/80 rounded-full border border-slate-800 transition cursor-pointer"
+              title="Đóng chỉ dẫn"
+            >
+              <X className="w-4 h-4" />
+            </button>
+
+            {/* Modal Icon and Header */}
+            <div className="flex flex-col items-center text-center space-y-4">
+              <div className="w-16 h-16 rounded-2xl bg-emerald-500/10 text-emerald-400 flex items-center justify-center border border-emerald-500/20 shadow-lg shadow-emerald-500/5">
+                <CloudLightning className="w-8 h-8 animate-pulse text-emerald-300" />
+              </div>
+              
+              <div className="space-y-1.5">
+                <h3 className="text-lg font-extrabold tracking-tight text-white">
+                  Tên Miền Chưa Được Cấu Hình Xác Thực
+                </h3>
+                <p className="text-xs text-emerald-400 font-bold uppercase tracking-widest font-mono">
+                  UNAUTHORIZED DOMAIN DETECTED
+                </p>
+              </div>
+            </div>
+
+            {/* Modal Explanatory Content */}
+            <div className="text-xs text-slate-300 leading-relaxed space-y-4 bg-slate-950/50 p-4 rounded-xl border border-slate-800 font-medium">
+              <p>
+                Để bảo mật, Firebase Authentication yêu cầu bạn phải phê duyệt miền đang truy cập trước khi mở hộp thoại đăng nhập Google.
+              </p>
+              <div>
+                <p className="text-emerald-400 font-bold mb-1 uppercase tracking-wider text-[10px]">Tên miền cần đưa vào danh sách cho phép (Authorized Domain):</p>
+                <code className="block p-2 bg-slate-950 border border-slate-850 rounded-lg text-rose-300 select-all font-mono break-all text-center">
+                  {typeof window !== "undefined" ? window.location.hostname : "ais-dev-geyypol5w3zflhpgw2fdnm-948959852711.asia-southeast1.run.app"}
+                </code>
+              </div>
+              <div className="space-y-2 pt-1 border-t border-slate-800">
+                <p className="font-bold flex items-center gap-1.5 text-slate-250">
+                  <span className="w-5 h-5 rounded bg-emerald-500/10 text-emerald-400 flex items-center justify-center text-[10px] font-mono font-bold">1</span>
+                  <span>Nhấp vào nút liên kết Firebase Console bên dưới.</span>
+                </p>
+                <p className="font-bold flex items-center gap-1.5 text-slate-250">
+                  <span className="w-5 h-5 rounded bg-emerald-500/10 text-emerald-400 flex items-center justify-center text-[10px] font-mono font-bold">2</span>
+                  <span>Chọn <strong>Thêm miền (Add domain)</strong> và dán miền phía trên vào rồi lưu lại. Sẵn sàng hoạt động ngay lập tức!</span>
+                </p>
+              </div>
+            </div>
+
+            {/* Action buttons */}
+            <div className="space-y-3">
+              <a
+                href={`https://console.firebase.google.com/project/${firebaseConfig.projectId}/authentication/settings`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="w-full py-3.5 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-black transition flex items-center justify-center gap-2 border border-emerald-700/50 shadow-lg shadow-emerald-500/10 cursor-pointer text-center"
+              >
+                <span>Mở Firebase Auth Settings</span>
+                <ExternalLink className="w-4 h-4" />
+              </a>
+
+              <div className="flex gap-2.5 pt-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDomainError(false);
+                  }}
+                  className="w-full py-2.5 px-4 text-[11px] text-slate-400 hover:text-slate-200 bg-slate-950 hover:bg-slate-900 border border-slate-850 text-center font-bold rounded-xl transition cursor-pointer"
+                >
+                  Đóng & Tiếp tục dùng ngoại tuyến
                 </button>
               </div>
             </div>
