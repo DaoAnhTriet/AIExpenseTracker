@@ -16,13 +16,22 @@ import {
   User as UserIcon,
   CloudLightning,
   ExternalLink,
-  Info
+  Info,
+  Upload,
+  Download,
+  Cloud
 } from "lucide-react";
 import { onAuthStateChanged, signInWithPopup, GoogleAuthProvider, signOut, User } from "firebase/auth";
-import { doc, setDoc, deleteDoc, collection, onSnapshot, getDocFromServer } from "firebase/firestore";
-import { Transaction, UserProfile, Goal } from "./types";
-import { auth, db, handleFirestoreError, OperationType } from "./firebase";
+import { doc, getDocFromServer } from "firebase/firestore";
+import { Transaction, UserProfile, Goal, DriveData } from "./types";
+import { auth, db } from "./firebase";
 import firebaseConfig from "../firebase-applet-config.json";
+import {
+  findBackupFile,
+  downloadBackupFile,
+  createBackupFile,
+  updateBackupFile
+} from "./lib/googleDriveService";
 import AIBuddyAvatar from "./components/AIBuddyAvatar";
 import BudgetGoalWidgets from "./components/BudgetGoalWidgets";
 import TransactionList from "./components/TransactionList";
@@ -61,6 +70,12 @@ export default function App() {
   const [isAiLoading, setIsAiLoading] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
 
+  // Google Drive & Local Sync States
+  const [googleAccessToken, setGoogleAccessToken] = useState<string | null>(null);
+  const [lastDriveSync, setLastDriveSync] = useState<string | null>(() => localStorage.getItem("last_drive_sync"));
+  const [driveFileId, setDriveFileId] = useState<string | null>(() => localStorage.getItem("drive_file_id"));
+  const [autoSaveEnabled, setAutoSaveEnabled] = useState<boolean>(true);
+
   // UI States
   const [showSimPresets, setShowSimPresets] = useState(false);
   const [speechSupported, setSpeechSupported] = useState(false);
@@ -95,130 +110,196 @@ export default function App() {
     testConnection();
   }, []);
 
-  // 2. Track Firebase Auth state change and coordinate merging / data loading
+  // 2. Track Firebase Auth state change and load local storage on mount as our core database
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       setUser(currentUser);
       setAuthLoading(false);
-
-      if (currentUser) {
-        showToast(`Chào mừng quay trở lại, ${currentUser.displayName || "Sếp"}!`, "success");
-        // Trigger automated cloud sync checks
-        setIsSyncing(true);
-      } else {
-        // Fallback to local storage when not authenticated
-        const savedProfile = localStorage.getItem("expense_tracker_profile");
-        const savedTx = localStorage.getItem("expense_tracker_tx");
-        const savedGoals = localStorage.getItem("expense_tracker_goals");
-
-        if (savedProfile) setUserProfile(JSON.parse(savedProfile));
-        else setUserProfile(INITIAL_PROFILE);
-
-        if (savedTx) setTransactions(JSON.parse(savedTx));
-        else setTransactions([]);
-
-        if (savedGoals) setGoals(JSON.parse(savedGoals));
-        else setGoals([]);
+      if (!currentUser) {
+        setGoogleAccessToken(null);
       }
     });
+
+    // Always load local device storage as single source of truth
+    const savedProfile = localStorage.getItem("expense_tracker_profile");
+    const savedTx = localStorage.getItem("expense_tracker_tx");
+    const savedGoals = localStorage.getItem("expense_tracker_goals");
+
+    if (savedProfile) {
+      setUserProfile(JSON.parse(savedProfile));
+    } else {
+      setUserProfile(INITIAL_PROFILE);
+    }
+
+    if (savedTx) {
+      setTransactions(JSON.parse(savedTx));
+    } else {
+      setTransactions([]);
+    }
+
+    if (savedGoals) {
+      setGoals(JSON.parse(savedGoals));
+    } else {
+      setGoals([]);
+    }
 
     return () => unsubscribe();
   }, []);
 
-  // 3. Keep real-time Firestore collections synchronized in real-time when authenticated!
-  useEffect(() => {
-    if (!user) return;
+  // Sync state helper to save locally + silently backup to Google Drive
+  const syncDataInLocalStorageAndDrive = async (
+    newProfile: UserProfile,
+    newTx: Transaction[],
+    newGoals: Goal[]
+  ) => {
+    setUserProfile(newProfile);
+    setTransactions(newTx);
+    setGoals(newGoals);
 
+    saveStateLocally(newProfile, newTx, newGoals);
+
+    if (autoSaveEnabled && googleAccessToken) {
+      try {
+        let fileId = driveFileId;
+        if (!fileId) {
+          fileId = await findBackupFile(googleAccessToken);
+          if (fileId) {
+            setDriveFileId(fileId);
+            localStorage.setItem("drive_file_id", fileId);
+          }
+        }
+
+        const dataPayload: DriveData = {
+          user_profile: newProfile,
+          transactions: newTx,
+          goals: newGoals
+        };
+
+        if (fileId) {
+          await updateBackupFile(googleAccessToken, fileId, dataPayload);
+        } else {
+          const newId = await createBackupFile(googleAccessToken, dataPayload);
+          if (newId) {
+            setDriveFileId(newId);
+            localStorage.setItem("drive_file_id", newId);
+          }
+        }
+
+        const timeStr = new Date().toLocaleString("vi-VN");
+        setLastDriveSync(timeStr);
+        localStorage.setItem("last_drive_sync", timeStr);
+      } catch (err) {
+        console.error("Background auto-save failed:", err);
+      }
+    }
+  };
+
+  // Active sync control trigger for Google Drive (Force upload or Force download)
+  const syncWithGoogleDrive = async (token: string, forceTarget?: "upload" | "download") => {
     setIsSyncing(true);
+    try {
+      let fileId = driveFileId;
+      if (!fileId) {
+        fileId = await findBackupFile(token);
+        if (fileId) {
+          setDriveFileId(fileId);
+          localStorage.setItem("drive_file_id", fileId);
+        }
+      }
 
-    // Profile subscription
-    const profileRef = doc(db, "users", user.uid);
-    const unsubProfile = onSnapshot(profileRef, (snapshot) => {
-      if (snapshot.exists()) {
-        setUserProfile(snapshot.data() as UserProfile);
+      const activeLocalData: DriveData = {
+        user_profile: userProfile,
+        transactions: transactions,
+        goals: goals
+      };
+
+      if (!fileId) {
+        if (forceTarget === "download") {
+          showToast("Không tìm thấy tệp sao lưu nào trên Google Drive để đồng bộ ngược!", "error");
+          return;
+        }
+
+        // Create new backup file
+        const newId = await createBackupFile(token, activeLocalData);
+        if (newId) {
+          setDriveFileId(newId);
+          localStorage.setItem("drive_file_id", newId);
+          const timeStr = new Date().toLocaleString("vi-VN");
+          setLastDriveSync(timeStr);
+          localStorage.setItem("last_drive_sync", timeStr);
+          showToast("Đã khởi tạo và Sao lưu dữ liệu hiện tại lên Google Drive thành công!", "success");
+        } else {
+          showToast("Không thể tạo tệp đồng bộ Google Drive.", "error");
+        }
       } else {
-        // First log in with zero Firestore records: upload current local storage state as initial base profile
-        const localProfStr = localStorage.getItem("expense_tracker_profile");
-        const baseProfile = localProfStr ? JSON.parse(localProfStr) : INITIAL_PROFILE;
-        
-        setDoc(profileRef, {
-          userId: user.uid,
-          total_balance: baseProfile.total_balance,
-          currency: baseProfile.currency,
-          monthly_budget: baseProfile.monthly_budget
-        })
-          .then(() => {
-            // Also merge any existing offline transactions and goals to cloud
-            mergeOfflineDataToCloud(user.uid);
-          })
-          .catch((err) => handleFirestoreError(err, OperationType.WRITE, `users/${user.uid}`));
-      }
-      setIsSyncing(false);
-    }, (error) => {
-      handleFirestoreError(error, OperationType.GET, `users/${user.uid}`);
-      setIsSyncing(false);
-    });
+        if (forceTarget === "upload") {
+          // Sync UP
+          const success = await updateBackupFile(token, fileId, activeLocalData);
+          if (success) {
+            const timeStr = new Date().toLocaleString("vi-VN");
+            setLastDriveSync(timeStr);
+            localStorage.setItem("last_drive_sync", timeStr);
+            showToast("Bản sao lưu Google Drive đã được cập nhật thành công!", "success");
+          } else {
+            showToast("Đồng bộ lên Google Drive thất bại.", "error");
+          }
+        } else if (forceTarget === "download") {
+          // Sync DOWN
+          const ok = window.confirm(
+            "Xác nhận khôi phục? Thao tác này sẽ thay đổi TOÀN BỘ số dư, giao dịch, mục tiêu hiện có bằng dữ liệu trong Google Drive."
+          );
+          if (!ok) return;
 
-    // Subscriptions for transactions subcollection
-    const txCol = collection(db, "users", user.uid, "transactions");
-    const unsubTx = onSnapshot(txCol, (snapshot) => {
-      const list: Transaction[] = [];
-      snapshot.forEach((doc) => {
-        list.push(doc.data() as Transaction);
-      });
-      // Sort desc
-      list.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-      setTransactions(list);
-    }, (error) => {
-      handleFirestoreError(error, OperationType.GET, `users/${user.uid}/transactions`);
-    });
+          const onlineData = await downloadBackupFile(token, fileId);
+          if (onlineData) {
+            const profileToUse = onlineData.user_profile || userProfile;
+            const txToUse = onlineData.transactions || transactions;
+            const goalsToUse = onlineData.goals || goals;
 
-    // Subscriptions for goals subcollection
-    const goalsCol = collection(db, "users", user.uid, "goals");
-    const unsubGoals = onSnapshot(goalsCol, (snapshot) => {
-      const list: Goal[] = [];
-      snapshot.forEach((doc) => {
-        list.push(doc.data() as Goal);
-      });
-      setGoals(list);
-    }, (error) => {
-      handleFirestoreError(error, OperationType.GET, `users/${user.uid}/goals`);
-    });
+            setUserProfile(profileToUse);
+            setTransactions(txToUse);
+            setGoals(goalsToUse);
 
-    return () => {
-      unsubProfile();
-      unsubTx();
-      unsubGoals();
-    };
-  }, [user]);
+            saveStateLocally(profileToUse, txToUse, goalsToUse);
 
-  // Merge local data tool on initial login so no data is ever lost
-  const mergeOfflineDataToCloud = async (userId: string) => {
-    const savedTxStr = localStorage.getItem("expense_tracker_tx");
-    const savedGoalsStr = localStorage.getItem("expense_tracker_goals");
+            const timeStr = new Date().toLocaleString("vi-VN");
+            setLastDriveSync(timeStr);
+            localStorage.setItem("last_drive_sync", timeStr);
+            showToast("Đã khôi phục toàn bộ dữ liệu từ Google Drive về máy thành công!", "success");
+          } else {
+            showToast("Không thể tải xuống dữ liệu từ Google Drive.", "error");
+          }
+        } else {
+          // Auto load on login if local is clear
+          const localIsEmpty = transactions.length === 0 && goals.length === 0;
+          if (localIsEmpty) {
+            const onlineData = await downloadBackupFile(token, fileId);
+            if (onlineData) {
+              const profileToUse = onlineData.user_profile || userProfile;
+              const txToUse = onlineData.transactions || transactions;
+              const goalsToUse = onlineData.goals || goals;
 
-    if (savedTxStr) {
-      const items: Transaction[] = JSON.parse(savedTxStr);
-      for (const item of items) {
-        try {
-          await setDoc(doc(db, `users/${userId}/transactions`, item.id), item);
-        } catch (e) {
-          console.error("Merging transaction failed", e);
+              setUserProfile(profileToUse);
+              setTransactions(txToUse);
+              setGoals(goalsToUse);
+
+              saveStateLocally(profileToUse, txToUse, goalsToUse);
+
+              const timeStr = new Date().toLocaleString("vi-VN");
+              setLastDriveSync(timeStr);
+              localStorage.setItem("last_drive_sync", timeStr);
+              showToast("Đã tải tự động dữ liệu sao lưu cũ từ Google Drive!", "success");
+            }
+          } else {
+            showToast("Kết nối với Google Drive của bạn đã sẵn sàng!", "info");
+          }
         }
       }
+    } catch (err: any) {
+      showToast(`Đồng bộ thất bại: ${err.message || err}`, "error");
+    } finally {
+      setIsSyncing(false);
     }
-
-    if (savedGoalsStr) {
-      const items: Goal[] = JSON.parse(savedGoalsStr);
-      for (const item of items) {
-        try {
-          await setDoc(doc(db, `users/${userId}/goals`, item.id), item);
-        } catch (e) {
-          console.error("Merging goal failed", e);
-        }
-      }
-    }
-    showToast("Đã đồng bộ hóa an toàn toàn bộ dữ liệu ngoại tuyến hiện tại lên Cloud!", "success");
   };
 
   // Local-storage file persistence (used as fallback or sync cache)
@@ -287,11 +368,21 @@ export default function App() {
   // ---------------------------------------------------------------------------
   const handleGoogleSignIn = async () => {
     const provider = new GoogleAuthProvider();
+    provider.addScope("https://www.googleapis.com/auth/drive.file");
     try {
       setIsSyncing(true);
       setPopupError(false); // Reset any prior popup block state
       setDomainError(false); // Reset prior domain authorization error
-      await signInWithPopup(auth, provider);
+      const result = await signInWithPopup(auth, provider);
+      const credential = GoogleAuthProvider.credentialFromResult(result);
+      
+      if (credential?.accessToken) {
+        setGoogleAccessToken(credential.accessToken);
+        showToast("Đăng nhập và tích hợp Google Drive thành công!", "success");
+        await syncWithGoogleDrive(credential.accessToken);
+      } else {
+        showToast("Đăng nhập thành công nhưng thiếu quyền Google Drive.", "info");
+      }
     } catch (err: any) {
       console.error("Sign-In popup failed:", err);
       const isPopupBlocked = 
@@ -320,15 +411,13 @@ export default function App() {
   };
 
   const handleSignOut = async () => {
-    const ok = window.confirm("Xác nhận đăng xuất tài khoản? Ứng dụng sẽ chuyển lại chế độ Lưu trữ Nội bộ.");
+    const ok = window.confirm("Xác nhận đăng xuất tài khoản? Mọi dữ liệu hiện tại vẫn tiếp tục được lưu trữ ngoại tuyến an toàn.");
     if (!ok) return;
 
     try {
       await signOut(auth);
-      setTransactions([]);
-      setGoals([]);
-      setUserProfile(INITIAL_PROFILE);
-      showToast("Đã đăng xuất ra khỏi tài khoản đám mây.", "info");
+      setGoogleAccessToken(null);
+      showToast("Đã đăng xuất. Bạn đã chuyển về chế độ Ngoại tuyến độc lập.", "info");
     } catch (err: any) {
       showToast("Đăng xuất thất bại.", "error");
     }
@@ -356,12 +445,39 @@ export default function App() {
         })
       });
 
-      if (!response.ok) {
-        const errData = await response.json();
-        throw new Error(errData.error || "Gặp sự cố khi kết nối Gemini AI.");
+      let responseText = "";
+      try {
+        responseText = await response.text();
+      } catch (readErr) {
+        throw new Error("Không thể đọc phản hồi từ máy chủ.");
       }
 
-      const parsedResult = await response.json();
+      if (!response.ok) {
+        let errMsg = "Gặp sự cố khi kết nối Gemini AI.";
+        try {
+          const errData = JSON.parse(responseText);
+          errMsg = errData.error || errMsg;
+        } catch {
+          if (
+            responseText.includes("<html") || 
+            responseText.includes("<!DOCTYPE") || 
+            responseText.includes("The page") ||
+            responseText.includes("Cannot POST")
+          ) {
+            errMsg = "Hệ thống AI đang khởi động lại hoặc gặp sự cố đường truyền đám mây. Vui lòng thử lại sau vài giây.";
+          } else {
+            errMsg = responseText || errMsg;
+          }
+        }
+        throw new Error(errMsg);
+      }
+
+      let parsedResult;
+      try {
+        parsedResult = JSON.parse(responseText);
+      } catch {
+        throw new Error("Dữ liệu phản hồi từ AI không đúng định dạng JSON chuẩn.");
+      }
 
       const amount = Number(parsedResult.amount) || 0;
       const category = parsedResult.category || "Khác";
@@ -396,57 +512,22 @@ export default function App() {
       type: payload.type
     };
 
-    if (user) {
-      try {
-        const txRef = doc(db, `users/${user.uid}/transactions`, newTx.id);
-        await setDoc(txRef, newTx);
-      } catch (err) {
-        handleFirestoreError(err, OperationType.WRITE, `users/${user.uid}/transactions/${newTx.id}`);
-      }
-    } else {
-      const updatedTx = [newTx, ...transactions];
-      setTransactions(updatedTx);
-      saveStateLocally(userProfile, updatedTx, goals);
-    }
+    const updatedTx = [newTx, ...transactions];
+    await syncDataInLocalStorageAndDrive(userProfile, updatedTx, goals);
   };
 
   // ---------------------------------------------------------------------------
   // Action Event Dispatchers
   // ---------------------------------------------------------------------------
   const handleDeleteTransaction = async (id: string) => {
-    if (user) {
-      try {
-        const txRef = doc(db, `users/${user.uid}/transactions`, id);
-        await deleteDoc(txRef);
-      } catch (err) {
-        handleFirestoreError(err, OperationType.DELETE, `users/${user.uid}/transactions/${id}`);
-      }
-    } else {
-      const updatedTx = transactions.filter((tx) => tx.id !== id);
-      setTransactions(updatedTx);
-      saveStateLocally(userProfile, updatedTx, goals);
-    }
+    const updatedTx = transactions.filter((tx) => tx.id !== id);
+    await syncDataInLocalStorageAndDrive(userProfile, updatedTx, goals);
     showToast("Đã xóa giao dịch thành công.", "success");
   };
 
   const handleUpdateBudget = async (newBudget: number) => {
     const updatedProfile = { ...userProfile, monthly_budget: newBudget };
-    setUserProfile(updatedProfile);
-    saveStateLocally(updatedProfile, transactions, goals);
-
-    if (user) {
-      try {
-        const profileRef = doc(db, "users", user.uid);
-        await setDoc(profileRef, {
-          userId: user.uid,
-          monthly_budget: newBudget,
-          total_balance: userProfile.total_balance,
-          currency: "VND"
-        });
-      } catch (err) {
-        handleFirestoreError(err, OperationType.WRITE, `users/${user.uid}`);
-      }
-    }
+    await syncDataInLocalStorageAndDrive(updatedProfile, transactions, goals);
     showToast("Cập nhật hạn mức chi tiêu thành công!", "success");
   };
 
@@ -458,18 +539,8 @@ export default function App() {
       current: 0
     };
 
-    if (user) {
-      try {
-        const goalRef = doc(db, `users/${user.uid}/goals`, newGoal.id);
-        await setDoc(goalRef, newGoal);
-      } catch (err) {
-        handleFirestoreError(err, OperationType.WRITE, `users/${user.uid}/goals/${newGoal.id}`);
-      }
-    } else {
-      const updatedGoals = [...goals, newGoal];
-      setGoals(updatedGoals);
-      saveStateLocally(userProfile, transactions, updatedGoals);
-    }
+    const updatedGoals = [...goals, newGoal];
+    await syncDataInLocalStorageAndDrive(userProfile, transactions, updatedGoals);
     showToast(`Đã thêm mục tiêu tích lũy "${name}"!`, "success");
   };
 
@@ -494,39 +565,15 @@ export default function App() {
       type: "expense"
     };
 
-    if (user) {
-      try {
-        const goalRef = doc(db, `users/${user.uid}/goals`, id);
-        const txRef = doc(db, `users/${user.uid}/transactions`, goalFundingTx.id);
-
-        await setDoc(goalRef, updatedGoal);
-        await setDoc(txRef, goalFundingTx);
-      } catch (err) {
-        handleFirestoreError(err, OperationType.WRITE, `users/${user.uid}`);
-      }
-    } else {
-      const updatedGoals = goals.map((g) => (g.id === id ? updatedGoal : g));
-      const updatedTx = [goalFundingTx, ...transactions];
-      setGoals(updatedGoals);
-      setTransactions(updatedTx);
-      saveStateLocally(userProfile, updatedTx, updatedGoals);
-    }
+    const updatedGoals = goals.map((g) => (g.id === id ? updatedGoal : g));
+    const updatedTx = [goalFundingTx, ...transactions];
+    await syncDataInLocalStorageAndDrive(userProfile, updatedTx, updatedGoals);
     showToast(`Đã gom thêm ${amount.toLocaleString("vi-VN")} VND vào tiết kiệm!`, "success");
   };
 
   const handleDeleteGoal = async (id: string) => {
-    if (user) {
-      try {
-        const goalRef = doc(db, `users/${user.uid}/goals`, id);
-        await deleteDoc(goalRef);
-      } catch (err) {
-        handleFirestoreError(err, OperationType.DELETE, `users/${user.uid}/goals/${id}`);
-      }
-    } else {
-      const updatedGoals = goals.filter((g) => g.id !== id);
-      setGoals(updatedGoals);
-      saveStateLocally(userProfile, transactions, updatedGoals);
-    }
+    const updatedGoals = goals.filter((g) => g.id !== id);
+    await syncDataInLocalStorageAndDrive(userProfile, transactions, updatedGoals);
     showToast("Đã xóa mục tiêu tích lũy.", "success");
   };
 
@@ -569,8 +616,8 @@ export default function App() {
               <h1 className="text-sm font-black tracking-tight uppercase bg-gradient-to-r from-emerald-400 via-teal-300 to-indigo-400 bg-clip-text text-transparent">
                 Expense Tracker AI
               </h1>
-              <p className="text-[10px] text-slate-500 font-mono tracking-wider font-semibold">
-                SECURE FIREBASE BACKEND
+              <p className="text-[10px] text-slate-400 font-mono tracking-wider font-bold">
+                DRIVE & LOCAL STORAGE SYNC
               </p>
             </div>
           </div>
@@ -578,9 +625,19 @@ export default function App() {
           <div className="flex items-center gap-3">
             {/* Connection Status Flag */}
             <div className="hidden sm:flex items-center gap-2 pr-2">
-              <span className={`w-2.5 h-2.5 rounded-full ${user ? "bg-emerald-400 shadow-md shadow-emerald-400/50" : "bg-indigo-500/80 animate-pulse"}`}></span>
+              <span className={`w-2.5 h-2.5 rounded-full ${
+                googleAccessToken 
+                  ? "bg-emerald-400 shadow-md shadow-emerald-450/50 animate-pulse" 
+                  : user 
+                    ? "bg-amber-400 shadow-md shadow-amber-400/50" 
+                    : "bg-indigo-500/80"
+              }`}></span>
               <span className="text-[10px] font-mono font-extrabold uppercase tracking-widest text-slate-400">
-                {user ? "Cloud Synced" : "Sandboxed Local Mode"}
+                {googleAccessToken 
+                  ? "Drive Sync Active" 
+                  : user 
+                    ? "Drive Authenticating" 
+                    : "Local Storage Mode"}
               </span>
             </div>
 
@@ -674,26 +731,121 @@ export default function App() {
             </div>
           </div>
 
-          {/* Secure Firebase Account banner if guest */}
-          {!user && (
-            <div className="p-4 rounded-2xl border border-indigo-500/20 bg-indigo-500/5 flex items-center justify-between gap-4">
-              <div className="flex gap-2.5">
-                <div className="p-2 h-fit bg-indigo-500/10 rounded-xl text-indigo-400">
-                  <CloudLightning className="w-4 h-4 animate-bounce" />
-                </div>
+          {/* Google Drive Active Sync Center */}
+          <div className="p-5 rounded-2xl border border-slate-800 bg-slate-900/40 backdrop-blur-sm space-y-4 shadow-xl">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                {googleAccessToken ? (
+                  <div className="w-8 h-8 rounded-xl bg-emerald-500/10 text-emerald-450 flex items-center justify-center border border-emerald-550/20 shadow-lg shadow-emerald-500/5">
+                    <Cloud className="w-4 h-4 text-emerald-400" />
+                  </div>
+                ) : (
+                  <div className="w-8 h-8 rounded-xl bg-slate-950 text-slate-500 flex items-center justify-center border border-slate-800">
+                    <CloudLightning className="w-4 h-4 text-indigo-400" />
+                  </div>
+                )}
                 <div>
-                  <h4 className="text-xs font-bold text-slate-200">Lưu trữ Ngoại tuyến Cục bộ</h4>
-                  <p className="text-[10px] text-slate-400 mt-0.5">Dữ liệu của bạn chưa được đưa lên mây. Nhấp đăng nhập để sao lưu tức thời.</p>
+                  <h4 className="text-xs font-bold text-slate-100 font-sans">Đồng bộ Google Drive</h4>
+                  <p className="text-[10px] text-slate-500 font-mono tracking-wider font-bold">
+                    {googleAccessToken ? "🟢 FULLY CONNECTED" : "⚪ OFFLINE LOCAL DEVICE"}
+                  </p>
                 </div>
               </div>
-              <button 
-                onClick={handleGoogleSignIn}
-                className="shrink-0 p-1.5 px-3 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-[10px] transition cursor-pointer"
-              >
-                Đăng nhập ngay
-              </button>
+
+              {googleAccessToken && (
+                <span className="text-[9px] uppercase font-mono font-extrabold px-2 py-0.5 rounded-md bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                  Active
+                </span>
+              )}
             </div>
-          )}
+
+            {googleAccessToken ? (
+              <div className="space-y-3">
+                <div className="p-3 bg-slate-950/70 border border-slate-900 rounded-xl space-y-2 text-[11px] text-slate-400 font-mono leading-relaxed">
+                  <div className="flex justify-between items-center">
+                    <span>Trạng thái tệp:</span>
+                    <span className="text-slate-200 text-right truncate max-w-40 font-semibold">
+                      {driveFileId ? `ID: ${driveFileId.slice(0, 8)}...` : "Khởi tạo tự động"}
+                    </span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span>Lần đồng bộ cuối:</span>
+                    <span className="text-slate-200 text-right font-semibold">{lastDriveSync || "Chưa lưu trong phiên"}</span>
+                  </div>
+                  <div className="flex justify-between items-center pt-2 border-t border-slate-900">
+                    <span className="font-semibold text-slate-350">Tự động Sao lưu:</span>
+                    <button
+                      onClick={() => setAutoSaveEnabled(!autoSaveEnabled)}
+                      className={`text-[10px] p-1 px-2.5 rounded font-bold cursor-pointer transition ${
+                        autoSaveEnabled 
+                          ? "bg-emerald-555/20 text-emerald-400 border border-emerald-500/30" 
+                          : "bg-slate-800 text-slate-500 border border-slate-700"
+                      }`}
+                    >
+                      {autoSaveEnabled ? "BẬT (Khuyên dùng)" : "TẮT"}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2.5 pt-1">
+                  <button
+                    onClick={() => syncWithGoogleDrive(googleAccessToken, "upload")}
+                    disabled={isSyncing}
+                    className="py-2.5 px-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-950 disabled:text-slate-700 text-white font-heavy text-xs flex items-center justify-center gap-1.5 cursor-pointer border border-indigo-750 transition shadow-lg shadow-indigo-600/10"
+                    title="Sao lưu toàn bộ số dư và giao dịch hiện tại lên ổ Google Drive của bạn"
+                  >
+                    <Upload className="w-3.5 h-3.5" />
+                    <span>Sao lưu (Up)</span>
+                  </button>
+
+                  <button
+                    onClick={() => syncWithGoogleDrive(googleAccessToken, "download")}
+                    disabled={isSyncing}
+                    className="py-2.5 px-3 rounded-xl bg-slate-940 hover:bg-slate-900 disabled:bg-slate-905 disabled:text-slate-700 text-slate-200 font-heavy text-xs flex items-center justify-center gap-1.5 cursor-pointer border border-slate-850 transition"
+                    title="Khôi phục toàn bộ số dư và giao dịch từ ổ Google Drive về trình duyệt"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    <span>Khôi phục (Down)</span>
+                  </button>
+                </div>
+              </div>
+            ) : user ? (
+              <div className="space-y-3 font-sans">
+                <p className="text-[11px] text-slate-405 leading-relaxed font-medium">
+                  Phiên đăng nhập đang sẵn sàng, nhưng ổ đĩa Google Drive chưa được mở khóa/cấp phép ở cửa sổ duyệt hiện tại (Token bảo mật giữ trong Ram).
+                </p>
+                <button
+                  type="button"
+                  onClick={handleGoogleSignIn}
+                  disabled={isSyncing}
+                  className="w-full py-2.5 px-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs flex items-center justify-center gap-1.5 cursor-pointer border border-indigo-750 transition shadow-lg shadow-indigo-600/10"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? "animate-spin" : ""}`} />
+                  Mở khóa & Đồng bộ Drive
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-3 font-sans">
+                <p className="text-[11px] text-slate-400 leading-relaxed font-medium">
+                  Ứng dụng đang vận hành hoàn toàn ở Ngoại tuyến. Hãy đăng nhập để kích hoạt đồng bộ chủ động 2 chiều lên hòm Google Drive bảo mật của riêng bạn.
+                </p>
+                <button
+                  type="button"
+                  onClick={handleGoogleSignIn}
+                  disabled={isSyncing}
+                  className="w-full py-2.5 px-3 rounded-xl bg-indigo-600 hover:bg-indigo-505 text-white font-bold text-xs flex items-center justify-center gap-1.5 cursor-pointer border border-indigo-750 transition shadow-lg shadow-indigo-600/10"
+                >
+                  <Cloud className="w-3.5 h-3.5" />
+                  Đồng bộ Google Drive
+                </button>
+              </div>
+            )}
+
+            <div className="pt-2 border-t border-slate-900/60 text-[9px] text-slate-500 leading-normal flex items-start gap-1 font-mono">
+              <Info className="w-3 h-3 text-slate-600 shrink-0 mt-0.5" />
+              <span>DỮ LIỆU CỦA BẠN, DRIVE CỦA BẠN: Hòm Cloud Firebase của quản trị viên chỉ xử lý xác thực đăng nhập, không lưu trữ sổ sách của bạn.</span>
+            </div>
+          </div>
 
           {/* Card: Voice / Text Entry input portal */}
           <div className="bg-slate-900/60 border border-slate-800/80 rounded-2xl p-6 shadow-xl backdrop-blur-md space-y-4">
