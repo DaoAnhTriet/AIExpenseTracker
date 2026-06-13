@@ -60,7 +60,7 @@ export default function TransactionList({ transactions, onDeleteTransaction }: P
   });
 
   return (
-    <div className="bg-slate-900/60 border border-slate-800/80 rounded-2xl p-5 shadow-lg backdrop-blur-md h-full flex flex-col">
+    <div className="bg-slate-900/60 border border-slate-800/80 rounded-2xl p-5 shadow-lg backdrop-blur-md flex flex-col">
       {/* Search Header */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-4">
         <div>
@@ -102,7 +102,7 @@ export default function TransactionList({ transactions, onDeleteTransaction }: P
       </div>
 
       {/* Details Table scrollarea */}
-      <div className="flex-1 overflow-y-auto max-h-[460px] pr-1 space-y-2.5 custom-scrollbar">
+      <div className="flex-1 overflow-y-auto max-h-[320px] pr-1 space-y-2.5 custom-scrollbar">
         {filteredTransactions.length === 0 ? (
           <div className="py-12 text-center bg-slate-950/20 rounded-xl border border-dashed border-slate-800 flex flex-col items-center justify-center">
             <Layers className="w-8 h-8 text-slate-700 mb-2" />

@@ -116,7 +116,7 @@ export default function App() {
         await getDocFromServer(doc(db, "test", "connection"));
       } catch (error) {
         if (error instanceof Error && error.message.includes("the client is offline")) {
-          console.error("Please check your Firebase configuration.");
+          console.info("Lưu ý: Bạn đang sử dụng ngoại tuyến, ứng dụng sẽ lưu trữ dữ liệu hoàn toàn trên thiết bị này của bạn.");
         }
       }
     }
@@ -920,7 +920,7 @@ export default function App() {
                   className="text-[10px] text-indigo-400 hover:text-indigo-300 flex items-center gap-1 cursor-pointer font-bold bg-slate-950/60 p-1 px-2.5 border border-slate-850 rounded-lg hover:bg-slate-950 transition-all font-sans"
                   title="Thay đổi cài đặt số dư ban đầu"
                 >
-                  <RefreshCw className="w-3 h-3 text-indigo-405" /> Cài đặt số dư
+                  <RefreshCw className="w-3 h-3 text-indigo-400" /> Cài đặt số dư
                 </button>
               </div>
               <h2 className="text-3xl font-black text-white leading-none tracking-tight">
@@ -937,121 +937,34 @@ export default function App() {
             </div>
           </div>
 
-          {/* Google Drive Active Sync Center */}
-          <div className="p-5 rounded-2xl border border-slate-800 bg-slate-900/40 backdrop-blur-sm space-y-4 shadow-xl">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                {googleAccessToken ? (
-                  <div className="w-8 h-8 rounded-xl bg-emerald-500/10 text-emerald-450 flex items-center justify-center border border-emerald-550/20 shadow-lg shadow-emerald-500/5">
-                    <Cloud className="w-4 h-4 text-emerald-400" />
-                  </div>
-                ) : (
-                  <div className="w-8 h-8 rounded-xl bg-slate-950 text-slate-500 flex items-center justify-center border border-slate-800">
-                    <CloudLightning className="w-4 h-4 text-indigo-400" />
-                  </div>
-                )}
-                <div>
-                  <h4 className="text-xs font-bold text-slate-100 font-sans">Đồng bộ Google Drive</h4>
-                  <p className="text-[10px] text-slate-500 font-mono tracking-wider font-bold">
-                    {googleAccessToken ? "🟢 FULLY CONNECTED" : "⚪ OFFLINE LOCAL DEVICE"}
-                  </p>
-                </div>
+          {/* Card: Simple category percentages chart */}
+          {totalExpenseSum > 0 && (
+            <div className="bg-slate-900/60 border border-slate-800/80 rounded-2xl p-5 shadow-xl backdrop-blur-md space-y-4 animate-fade-in">
+              <div>
+                <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Cộng dồn chi tiêu danh mục</h4>
               </div>
 
-              {googleAccessToken && (
-                <span className="text-[9px] uppercase font-mono font-extrabold px-2 py-0.5 rounded-md bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                  Active
-                </span>
-              )}
-            </div>
-
-            {googleAccessToken ? (
               <div className="space-y-3">
-                <div className="p-3 bg-slate-950/70 border border-slate-900 rounded-xl space-y-2 text-[11px] text-slate-400 font-mono leading-relaxed">
-                  <div className="flex justify-between items-center">
-                    <span>Trạng thái tệp:</span>
-                    <span className="text-slate-200 text-right truncate max-w-40 font-semibold">
-                      {driveFileId ? `ID: ${driveFileId.slice(0, 8)}...` : "Khởi tạo tự động"}
-                    </span>
-                  </div>
-                  <div className="flex justify-between items-center">
-                    <span>Lần đồng bộ cuối:</span>
-                    <span className="text-slate-200 text-right font-semibold">{lastDriveSync || "Chưa lưu trong phiên"}</span>
-                  </div>
-                  <div className="flex justify-between items-center pt-2 border-t border-slate-900">
-                    <span className="font-semibold text-slate-350">Tự động Sao lưu:</span>
-                    <button
-                      onClick={() => setAutoSaveEnabled(!autoSaveEnabled)}
-                      className={`text-[10px] p-1 px-2.5 rounded font-bold cursor-pointer transition ${
-                        autoSaveEnabled 
-                          ? "bg-emerald-555/20 text-emerald-400 border border-emerald-500/30" 
-                          : "bg-slate-800 text-slate-500 border border-slate-700"
-                      }`}
-                    >
-                      {autoSaveEnabled ? "BẬT (Khuyên dùng)" : "TẮT"}
-                    </button>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-2.5 pt-1">
-                  <button
-                    onClick={() => syncWithGoogleDrive(googleAccessToken, "upload")}
-                    disabled={isSyncing}
-                    className="py-2.5 px-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-950 disabled:text-slate-700 text-white font-heavy text-xs flex items-center justify-center gap-1.5 cursor-pointer border border-indigo-750 transition shadow-lg shadow-indigo-600/10"
-                    title="Sao lưu toàn bộ số dư và giao dịch hiện tại lên ổ Google Drive của bạn"
-                  >
-                    <Upload className="w-3.5 h-3.5" />
-                    <span>Sao lưu (Up)</span>
-                  </button>
-
-                  <button
-                    onClick={() => syncWithGoogleDrive(googleAccessToken, "download")}
-                    disabled={isSyncing}
-                    className="py-2.5 px-3 rounded-xl bg-slate-940 hover:bg-slate-900 disabled:bg-slate-905 disabled:text-slate-700 text-slate-200 font-heavy text-xs flex items-center justify-center gap-1.5 cursor-pointer border border-slate-850 transition"
-                    title="Khôi phục toàn bộ số dư và giao dịch từ ổ Google Drive về trình duyệt"
-                  >
-                    <Download className="w-3.5 h-3.5" />
-                    <span>Khôi phục (Down)</span>
-                  </button>
-                </div>
+                {(Object.entries(categorySummary) as [string, number][]).map(([cat, amt]) => {
+                  const perc = totalExpenseSum > 0 ? Math.round((amt / totalExpenseSum) * 100) : 0;
+                  return (
+                    <div key={cat} className="space-y-1">
+                      <div className="flex justify-between items-center text-xs">
+                        <span className="font-medium text-slate-200">{cat}</span>
+                        <span className="text-slate-400 font-bold">{amt.toLocaleString("vi-VN")} đ ({perc}%)</span>
+                      </div>
+                      <div className="w-full h-1.5 rounded-full bg-slate-950 overflow-hidden">
+                        <div 
+                          className="h-full bg-indigo-500 rounded-full" 
+                          style={{ width: `${perc}%` }}
+                        ></div>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
-            ) : user ? (
-              <div className="space-y-3 font-sans">
-                <p className="text-[11px] text-slate-405 leading-relaxed font-medium">
-                  Phiên đăng nhập đang sẵn sàng, nhưng ổ đĩa Google Drive chưa được mở khóa/cấp phép ở cửa sổ duyệt hiện tại (Token bảo mật giữ trong Ram).
-                </p>
-                <button
-                  type="button"
-                  onClick={handleGoogleSignIn}
-                  disabled={isSyncing}
-                  className="w-full py-2.5 px-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs flex items-center justify-center gap-1.5 cursor-pointer border border-indigo-750 transition shadow-lg shadow-indigo-600/10"
-                >
-                  <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? "animate-spin" : ""}`} />
-                  Mở khóa & Đồng bộ Drive
-                </button>
-              </div>
-            ) : (
-              <div className="space-y-3 font-sans">
-                <p className="text-[11px] text-slate-400 leading-relaxed font-medium">
-                  Ứng dụng đang vận hành hoàn toàn ở Ngoại tuyến. Hãy đăng nhập để kích hoạt đồng bộ chủ động 2 chiều lên hòm Google Drive bảo mật của riêng bạn.
-                </p>
-                <button
-                  type="button"
-                  onClick={handleGoogleSignIn}
-                  disabled={isSyncing}
-                  className="w-full py-2.5 px-3 rounded-xl bg-indigo-600 hover:bg-indigo-505 text-white font-bold text-xs flex items-center justify-center gap-1.5 cursor-pointer border border-indigo-750 transition shadow-lg shadow-indigo-600/10"
-                >
-                  <Cloud className="w-3.5 h-3.5" />
-                  Đồng bộ Google Drive
-                </button>
-              </div>
-            )}
-
-            <div className="pt-2 border-t border-slate-900/60 text-[9px] text-slate-500 leading-normal flex items-start gap-1 font-mono">
-              <Info className="w-3 h-3 text-slate-600 shrink-0 mt-0.5" />
-              <span>DỮ LIỆU CỦA BẠN, DRIVE CỦA BẠN: Hòm Cloud Firebase của quản trị viên chỉ xử lý xác thực đăng nhập, không lưu trữ sổ sách của bạn.</span>
             </div>
-          </div>
+          )}
 
           {/* Card: Voice / Text Entry input portal */}
           <div className="bg-slate-900/60 border border-slate-800/80 rounded-2xl p-6 shadow-xl backdrop-blur-md space-y-4">
@@ -1095,11 +1008,11 @@ export default function App() {
               <div className="space-y-3">
                 <div className="relative">
                   <textarea
-                    value={inputText}
-                    onChange={(e) => setInputText(e.target.value)}
-                    placeholder="VD: Được mẹ cho 200k sướng quá..."
-                    disabled={isAiLoading}
-                    className="w-full h-24 text-xs p-3.5 pr-14 bg-slate-950 border border-slate-800 rounded-xl leading-relaxed text-slate-100 focus:outline-none focus:border-indigo-400 transition placeholder:text-slate-600 resize-none font-medium"
+                     value={inputText}
+                     onChange={(e) => setInputText(e.target.value)}
+                     placeholder="VD: Được mẹ cho 200k sướng quá..."
+                     disabled={isAiLoading}
+                     className="w-full h-24 text-xs p-3.5 pr-14 bg-slate-950 border border-slate-800 rounded-xl leading-relaxed text-slate-100 focus:outline-none focus:border-indigo-400 transition placeholder:text-slate-600 resize-none font-medium"
                   />
 
                   <div className="absolute right-3.5 bottom-3.5 flex items-center gap-1.5">
@@ -1269,7 +1182,7 @@ export default function App() {
 
                 <button
                   type="submit"
-                  className="w-full py-3 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-500 transition text-xs font-bold flex items-center justify-center gap-2 border border-indigo-750 shadow-lg shadow-indigo-600/15 cursor-pointer text-white"
+                  className="w-full py-3 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-505 transition text-xs font-bold flex items-center justify-center gap-2 border border-indigo-750 shadow-lg shadow-indigo-600/15 cursor-pointer text-white"
                 >
                   <CheckCircle className="w-4 h-4 text-emerald-400" />
                   <span>Xác nhận Ghi Sổ ngay ({manualType === "income" ? "Khoản Thu" : "Khoản Chi"})</span>
@@ -1278,44 +1191,11 @@ export default function App() {
             )}
           </div>
 
-
-          {/* AI mascot feedback bubble chat */}
-          <AIBuddyAvatar 
-            reply={aiReply}
-            isBroke={isBroke}
-            isWealthy={isWealthy}
-            isLoading={isAiLoading}
-            error={aiError}
+          {/* Card section: Transaction列表 with custom categories - Placed here in left col for prominent access and to avoid pushing below budget */}
+          <TransactionList 
+            transactions={transactions}
+            onDeleteTransaction={handleDeleteTransaction}
           />
-
-          {/* Card: Simple category percentages chart */}
-          {totalExpenseSum > 0 && (
-            <div className="bg-slate-900/60 border border-slate-800/80 rounded-2xl p-5 shadow-xl backdrop-blur-md space-y-4">
-              <div>
-                <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Cộng dồn chi tiêu danh mục</h4>
-              </div>
-
-              <div className="space-y-3">
-                {(Object.entries(categorySummary) as [string, number][]).map(([cat, amt]) => {
-                  const perc = totalExpenseSum > 0 ? Math.round((amt / totalExpenseSum) * 100) : 0;
-                  return (
-                    <div key={cat} className="space-y-1">
-                      <div className="flex justify-between items-center text-xs">
-                        <span className="font-medium text-slate-200">{cat}</span>
-                        <span className="text-slate-400 font-bold">{amt.toLocaleString("vi-VN")} đ ({perc}%)</span>
-                      </div>
-                      <div className="w-full h-1.5 rounded-full bg-slate-950 overflow-hidden">
-                        <div 
-                          className="h-full bg-indigo-500 rounded-full" 
-                          style={{ width: `${perc}%` }}
-                        ></div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
 
         </section>
 
@@ -1333,11 +1213,130 @@ export default function App() {
             totalExpenses={totalExpenses}
           />
 
-          {/* Card section: Transaction列表 with custom categories */}
-          <TransactionList 
-            transactions={transactions}
-            onDeleteTransaction={handleDeleteTransaction}
+          {/* AI mascot feedback bubble chat */}
+          <AIBuddyAvatar 
+            reply={aiReply}
+            isBroke={isBroke}
+            isWealthy={isWealthy}
+            isLoading={isAiLoading}
+            error={aiError}
           />
+
+          {/* Google Drive Active Sync Center */}
+          <div className="p-5 rounded-2xl border border-slate-800 bg-slate-900/40 backdrop-blur-sm space-y-4 shadow-xl">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                {googleAccessToken ? (
+                  <div className="w-8 h-8 rounded-xl bg-emerald-500/10 text-emerald-450 flex items-center justify-center border border-emerald-550/20 shadow-lg shadow-emerald-500/5">
+                    <Cloud className="w-4 h-4 text-emerald-400" />
+                  </div>
+                ) : (
+                  <div className="w-8 h-8 rounded-xl bg-slate-950 text-slate-500 flex items-center justify-center border border-slate-800">
+                    <CloudLightning className="w-4 h-4 text-indigo-400" />
+                  </div>
+                )}
+                <div>
+                  <h4 className="text-xs font-bold text-slate-100 font-sans">Đồng bộ Google Drive</h4>
+                  <p className="text-[10px] text-slate-500 font-mono tracking-wider font-bold">
+                    {googleAccessToken ? "🟢 FULLY CONNECTED" : "⚪ OFFLINE LOCAL DEVICE"}
+                  </p>
+                </div>
+              </div>
+
+              {googleAccessToken && (
+                <span className="text-[9px] uppercase font-mono font-extrabold px-2 py-0.5 rounded-md bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                  Active
+                </span>
+              )}
+            </div>
+
+            {googleAccessToken ? (
+              <div className="space-y-3">
+                <div className="p-3 bg-slate-950/70 border border-slate-900 rounded-xl space-y-2 text-[11px] text-slate-400 font-mono leading-relaxed">
+                  <div className="flex justify-between items-center">
+                    <span>Trạng thái tệp:</span>
+                    <span className="text-slate-200 text-right truncate max-w-40 font-semibold">
+                      {driveFileId ? `ID: ${driveFileId.slice(0, 8)}...` : "Khởi tạo tự động"}
+                    </span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span>Lần đồng bộ cuối:</span>
+                    <span className="text-slate-200 text-right font-semibold">{lastDriveSync || "Chưa lưu trong phiên"}</span>
+                  </div>
+                  <div className="flex justify-between items-center pt-2 border-t border-slate-900">
+                    <span className="font-semibold text-slate-350">Tự động Sao lưu:</span>
+                    <button
+                      onClick={() => setAutoSaveEnabled(!autoSaveEnabled)}
+                      className={`text-[10px] p-1 px-2.5 rounded font-bold cursor-pointer transition ${
+                        autoSaveEnabled 
+                          ? "bg-emerald-555/20 text-emerald-400 border border-emerald-500/30" 
+                          : "bg-slate-800 text-slate-500 border border-slate-700"
+                      }`}
+                    >
+                      {autoSaveEnabled ? "BẬT (Khuyên dùng)" : "TẮT"}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2.5 pt-1">
+                  <button
+                    onClick={() => syncWithGoogleDrive(googleAccessToken, "upload")}
+                    disabled={isSyncing}
+                    className="py-2.5 px-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-950 disabled:text-slate-700 text-white font-heavy text-xs flex items-center justify-center gap-1.5 cursor-pointer border border-indigo-750 transition shadow-lg shadow-indigo-600/10"
+                    title="Sao lưu toàn bộ số dư và giao dịch hiện tại lên ổ Google Drive của bạn"
+                  >
+                    <Upload className="w-3.5 h-3.5" />
+                    <span>Sao lưu (Up)</span>
+                  </button>
+
+                  <button
+                    onClick={() => syncWithGoogleDrive(googleAccessToken, "download")}
+                    disabled={isSyncing}
+                    className="py-2.5 px-3 rounded-xl bg-slate-940 hover:bg-slate-900 disabled:bg-slate-905 disabled:text-slate-700 text-slate-200 font-heavy text-xs flex items-center justify-center gap-1.5 cursor-pointer border border-slate-850 transition"
+                    title="Khôi phục toàn bộ số dư và giao dịch từ ổ Google Drive về trình duyệt"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    <span>Khôi phục (Down)</span>
+                  </button>
+                </div>
+              </div>
+            ) : user ? (
+              <div className="space-y-3 font-sans">
+                <p className="text-[11px] text-slate-405 leading-relaxed font-medium">
+                  Phiên đăng nhập đang sẵn sàng, nhưng ổ đĩa Google Drive chưa được mở khóa/cấp phép ở cửa sổ duyệt hiện tại (Token bảo mật giữ trong Ram).
+                </p>
+                <button
+                  type="button"
+                  onClick={handleGoogleSignIn}
+                  disabled={isSyncing}
+                  className="w-full py-2.5 px-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs flex items-center justify-center gap-1.5 cursor-pointer border border-indigo-750 transition shadow-lg shadow-indigo-600/10"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? "animate-spin" : ""}`} />
+                  Mở khóa & Đồng bộ Drive
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-3 font-sans">
+                <p className="text-[11px] text-slate-400 leading-relaxed font-medium">
+                  Ứng dụng đang vận hành hoàn toàn ở Ngoại tuyến. Hãy đăng nhập để kích hoạt đồng bộ chủ động 2 chiều lên hòm Google Drive bảo mật của riêng bạn.
+                </p>
+                <button
+                  type="button"
+                  onClick={handleGoogleSignIn}
+                  disabled={isSyncing}
+                  className="w-full py-2.5 px-3 rounded-xl bg-indigo-600 hover:bg-indigo-505 text-white font-bold text-xs flex items-center justify-center gap-1.5 cursor-pointer border border-indigo-750 transition shadow-lg shadow-indigo-600/10"
+                >
+                  <Cloud className="w-3.5 h-3.5" />
+                  Đồng bộ Google Drive
+                </button>
+              </div>
+            )}
+
+            <div className="pt-2 border-t border-slate-900/60 text-[9px] text-slate-500 leading-normal flex items-start gap-1 font-mono">
+              <Info className="w-3 h-3 text-slate-600 shrink-0 mt-0.5" />
+              <span>DỮ LIỆU CỦA BẠN, DRIVE CỦA BẠN: Hòm Cloud Firebase của quản trị viên chỉ xử lượng xác thực đăng nhập, không lưu trữ sổ sách của bạn.</span>
+            </div>
+          </div>
 
         </section>
 
