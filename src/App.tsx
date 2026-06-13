@@ -85,6 +85,13 @@ export default function App() {
   const [popupError, setPopupError] = useState(false);
   const [domainError, setDomainError] = useState(false);
 
+  // Manual fast entry states with target support for money received / revenue
+  const [inputTab, setInputTab] = useState<"ai" | "manual">("ai");
+  const [manualAmount, setManualAmount] = useState<string>("");
+  const [manualCategory, setManualCategory] = useState<string>("Ăn uống");
+  const [manualNote, setManualNote] = useState<string>("");
+  const [manualType, setManualType] = useState<"expense" | "income">("income");
+
   const isInIframe = typeof window !== "undefined" && window.self !== window.top;
 
   const recognitionRef = useRef<any>(null);
@@ -516,6 +523,41 @@ export default function App() {
     await syncDataInLocalStorageAndDrive(userProfile, updatedTx, goals);
   };
 
+  const handleAddManualTransaction = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const amountVal = Number(manualAmount.replace(/[^0-9]/g, "")) || Number(manualAmount) || 0;
+    if (amountVal <= 0) {
+      showToast("Vui lòng nhập số tiền hợp lý!", "error");
+      return;
+    }
+    if (!manualNote.trim()) {
+      showToast("Vui lòng nhập nội dung ghi chú nhé!", "error");
+      return;
+    }
+
+    await _insertTransaction({
+      amount: amountVal,
+      category: manualCategory,
+      note: manualNote.trim(),
+      type: manualType
+    });
+
+    setManualAmount("");
+    setManualNote("");
+    showToast(
+      manualType === "income" 
+        ? `Đã nhận được +${amountVal.toLocaleString("vi-VN")} đ! Chúc mừng ní nhé!` 
+        : `Đã chi tiêu -${amountVal.toLocaleString("vi-VN")} đ thành công.`, 
+      "success"
+    );
+
+    if (manualType === "income") {
+      setAiReply(`💰 Đã cộng thêm ${amountVal.toLocaleString("vi-VN")} VND vào tài khoản! Tiền vô túi thơm ngát ní êu uii! Chăm chỉ kiếm tiền xịn sò quá xá hà!`);
+    } else {
+      setAiReply(`💸 Đã thêm khoản chi ${amountVal.toLocaleString("vi-VN")} VND cho mục "${manualCategory}". Ghi sổ đầy đủ dị là tốt dợp, cố lên cự ví nha!`);
+    }
+  };
+
   // ---------------------------------------------------------------------------
   // Action Event Dispatchers
   // ---------------------------------------------------------------------------
@@ -849,94 +891,229 @@ export default function App() {
 
           {/* Card: Voice / Text Entry input portal */}
           <div className="bg-slate-900/60 border border-slate-800/80 rounded-2xl p-6 shadow-xl backdrop-blur-md space-y-4">
-            <div>
-              <h3 className="text-sm font-bold text-slate-100 flex items-center gap-1.5">
-                <Sparkles className="w-4 h-4 text-emerald-400 animate-pulse" />
-                Nhập Liệu Bằng Giọng Nói & Văn Bản
-              </h3>
-              <p className="text-[11px] text-slate-400 mt-0.5">Nhấn giữ mic ghi âm hoặc gõ tự nhiên để Gemini AI tự động phân tích</p>
-            </div>
-
-            {/* Input Form layout */}
-            <div className="space-y-3">
-              <div className="relative">
-                <textarea
-                  value={inputText}
-                  onChange={(e) => setInputText(e.target.value)}
-                  placeholder="VD: Ăn bát phở hết 50k sương sương..."
-                  disabled={isAiLoading}
-                  className="w-full h-24 text-xs p-3.5 pr-14 bg-slate-950 border border-slate-800 rounded-xl leading-relaxed text-slate-100 focus:outline-none focus:border-indigo-400 transition placeholder:text-slate-600 resize-none font-medium"
-                />
-
-                <div className="absolute right-3.5 bottom-3.5 flex items-center gap-1.5">
-                  <button
-                    type="button"
-                    onClick={toggleRecording}
-                    className={`p-2.5 rounded-xl border transition-all cursor-pointer ${
-                      isRecording 
-                        ? "bg-rose-600 border-rose-500 text-white animate-pulse" 
-                        : "bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200 hover:border-slate-700"
-                    }`}
-                    title={isRecording ? "Đang ghi âm... Nhấp lần nữa để tắt" : "Bật micro ghi âm bằng giọng nói"}
-                  >
-                    {isRecording ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
-                  </button>
-                </div>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-1">
+              <div>
+                <h3 className="text-sm font-bold text-slate-100 flex items-center gap-1.5">
+                  <Sparkles className="w-4 h-4 text-emerald-400" />
+                  Ghi Chép Giao Dịch
+                </h3>
+                <p className="text-[11px] text-slate-400 mt-0.5">Thêm nhanh khoản tiền nhận được hoặc chi tiêu thủ công/bằng AI</p>
               </div>
 
-              {/* simulated voices shortcuts tab for manual testing */}
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <button
-                    type="button"
-                    onClick={() => setShowSimPresets(!showSimPresets)}
-                    className="text-[10px] uppercase font-bold tracking-wider text-indigo-400 hover:text-indigo-300 flex items-center gap-1"
-                  >
-                    <Volume2 className="w-3.5 h-3.5" />
-                    {showSimPresets ? "Ẩn danh sách thử nghiệm" : "Dùng văn bản nói thử nghiệm"}
-                  </button>
-                  
-                  {isRecording && (
-                    <span className="text-[10px] text-rose-400 font-bold animate-pulse">
-                      🔴 ĐANG LẮNG NGHE GIỌNG NÓI...
-                    </span>
+              <div className="flex bg-slate-950 p-1 rounded-xl border border-slate-850/80 self-start sm:self-auto shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setInputTab("ai")}
+                  className={`py-1 px-3 text-[10px] font-bold rounded-lg transition-all cursor-pointer ${
+                    inputTab === "ai" 
+                      ? "bg-indigo-600 text-white shadow shadow-indigo-600/20" 
+                      : "text-slate-500 hover:text-slate-300"
+                  }`}
+                >
+                  Giọng nói & AI
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setInputTab("manual")}
+                  className={`py-1 px-3 text-[10px] font-bold rounded-lg transition-all cursor-pointer ${
+                    inputTab === "manual" 
+                      ? "bg-indigo-600 text-white shadow shadow-indigo-600/20" 
+                      : "text-slate-500 hover:text-slate-300"
+                  }`}
+                >
+                  Ghi thủ công ✍️
+                </button>
+              </div>
+            </div>
+
+            {inputTab === "ai" ? (
+              /* Input Form layout for AI Entry */
+              <div className="space-y-3">
+                <div className="relative">
+                  <textarea
+                    value={inputText}
+                    onChange={(e) => setInputText(e.target.value)}
+                    placeholder="VD: Được mẹ cho 200k sướng quá..."
+                    disabled={isAiLoading}
+                    className="w-full h-24 text-xs p-3.5 pr-14 bg-slate-950 border border-slate-800 rounded-xl leading-relaxed text-slate-100 focus:outline-none focus:border-indigo-400 transition placeholder:text-slate-600 resize-none font-medium"
+                  />
+
+                  <div className="absolute right-3.5 bottom-3.5 flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={toggleRecording}
+                      className={`p-2.5 rounded-xl border transition-all cursor-pointer ${
+                        isRecording 
+                          ? "bg-rose-600 border-rose-500 text-white animate-pulse" 
+                          : "bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200 hover:border-slate-700"
+                      }`}
+                      title={isRecording ? "Đang ghi âm... Nhấp lần nữa để tắt" : "Bật micro ghi âm bằng giọng nói"}
+                    >
+                      {isRecording ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+                    </button>
+                  </div>
+                </div>
+
+                {/* simulated voices shortcuts tab for manual testing */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <button
+                      type="button"
+                      onClick={() => setShowSimPresets(!showSimPresets)}
+                      className="text-[10px] uppercase font-bold tracking-wider text-indigo-400 hover:text-indigo-300 flex items-center gap-1 cursor-pointer"
+                    >
+                      <Volume2 className="w-3.5 h-3.5" />
+                      {showSimPresets ? "Ẩn danh sách thử nghiệm" : "Dùng văn bản nói thử nghiệm"}
+                    </button>
+                    
+                    {isRecording && (
+                      <span className="text-[10px] text-rose-400 font-bold animate-pulse">
+                        🔴 ĐANG LẮNG NGHE GIỌNG NÓI...
+                      </span>
+                    )}
+                  </div>
+
+                  {showSimPresets && (
+                    <div className="p-2.5 bg-slate-950/60 border border-slate-850 rounded-xl max-h-40 overflow-y-auto space-y-1.5 custom-scrollbar">
+                      <p className="text-[10px] text-slate-500 italic pb-1">
+                        *Nhấp chọn câu bất kỳ dưới đây để giả điều kiện giọng nói/dịch thuật:
+                      </p>
+                      {SIMULATED_VOICES.map((line, idx) => (
+                        <button
+                          key={idx}
+                          type="button"
+                          onClick={() => {
+                            setInputText(line);
+                            setShowSimPresets(false);
+                          }}
+                          className="w-full text-left text-xs p-1.5 px-2.5 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-300 hover:text-white transition truncate font-mono cursor-pointer"
+                        >
+                          "{line}"
+                        </button>
+                      ))}
+                    </div>
                   )}
                 </div>
 
-                {showSimPresets && (
-                  <div className="p-2.5 bg-slate-950/60 border border-slate-850 rounded-xl max-h-40 overflow-y-auto space-y-1.5 custom-scrollbar">
-                    <p className="text-[10px] text-slate-500 italic pb-1">
-                      *Nhấp chọn câu bất kỳ dưới đây để giả điều kiện giọng nói/dịch thuật:
-                    </p>
-                    {SIMULATED_VOICES.map((line, idx) => (
-                      <button
-                        key={idx}
-                        type="button"
-                        onClick={() => {
-                          setInputText(line);
-                          setShowSimPresets(false);
-                        }}
-                        className="w-full text-left text-xs p-1.5 px-2.5 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-300 hover:text-white transition truncate font-mono"
-                      >
-                        "{line}"
-                      </button>
-                    ))}
-                  </div>
-                )}
+                {/* Trigger conversion action button */}
+                <button
+                  type="button"
+                  onClick={() => handleParseTransaction(inputText)}
+                  disabled={isAiLoading || !inputText.trim()}
+                  className="w-full py-3 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-900 disabled:text-slate-600 transition text-xs font-bold flex items-center justify-center gap-2 border border-indigo-700/50 shadow-lg shadow-indigo-600/10 cursor-pointer"
+                >
+                  <span>Xác nhận giao dịch với Gemini</span>
+                  <ArrowRight className="w-4 h-4" />
+                </button>
               </div>
+            ) : (
+              /* Manual form when tab is manual */
+              <form onSubmit={handleAddManualTransaction} className="space-y-3.5">
+                {/* Transaction Type selection (Expense vs. Income) */}
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setManualType("income");
+                      setManualCategory("Thu nhập");
+                    }}
+                    className={`py-2 px-3 rounded-lg border text-xs font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+                      manualType === "income"
+                        ? "bg-emerald-500/15 border-emerald-500/60 text-emerald-400 font-heavy shadow-sm shadow-emerald-500/5"
+                        : "bg-slate-950/40 border-slate-850 text-slate-500 hover:text-slate-350"
+                    }`}
+                  >
+                    <Coins className="w-3.5 h-3.5" />
+                    Nhận Tiền (+ Thu)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setManualType("expense");
+                      if (manualCategory === "Thu nhập") {
+                        setManualCategory("Ăn uống");
+                      }
+                    }}
+                    className={`py-2 px-3 rounded-lg border text-xs font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+                      manualType === "expense"
+                        ? "bg-rose-500/10 border-rose-500/40 text-rose-450 font-heavy"
+                        : "bg-slate-950/40 border-slate-850 text-slate-500 hover:text-slate-350"
+                    }`}
+                  >
+                    <TrendingDown className="w-3.5 h-3.5" />
+                    Chi Tiêu (- Chi)
+                  </button>
+                </div>
 
-              {/* Trigger conversion action button */}
-              <button
-                type="button"
-                onClick={() => handleParseTransaction(inputText)}
-                disabled={isAiLoading || !inputText.trim()}
-                className="w-full py-3 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-900 disabled:text-slate-600 transition text-xs font-bold flex items-center justify-center gap-2 border border-indigo-700/50 shadow-lg shadow-indigo-600/10 cursor-pointer"
-              >
-                <span>Xác nhận giao dịch với Gemini</span>
-                <ArrowRight className="w-4 h-4" />
-              </button>
-            </div>
+                {/* Amount and Category fields side by side */}
+                <div className="grid grid-cols-2 gap-3 pb-0.5">
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold tracking-wider text-slate-500 font-mono">Số tiền (VND)</label>
+                    <input
+                      type="text"
+                      required
+                      placeholder="VD: 50.000"
+                      value={manualAmount}
+                      onChange={(e) => {
+                        const cleaned = e.target.value.replace(/[^0-9]/g, "");
+                        setManualAmount(cleaned ? Number(cleaned).toLocaleString("vi-VN") : "");
+                      }}
+                      className="w-full text-xs p-2.5 bg-slate-950 border border-slate-850 rounded-xl leading-relaxed text-slate-100 focus:outline-none focus:border-indigo-500 transition font-mono font-bold"
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold tracking-wider text-slate-500">Danh mục</label>
+                    <select
+                      value={manualCategory}
+                      onChange={(e) => setManualCategory(e.target.value)}
+                      className="w-full text-xs p-2.5 bg-slate-950 border border-slate-850 rounded-xl leading-relaxed text-slate-100 focus:outline-none focus:border-indigo-500 transition cursor-pointer font-medium"
+                    >
+                      {manualType === "income" ? (
+                        <>
+                          <option value="Thu nhập">Thu nhập (Lương, Thưởng, Lộc)</option>
+                          <option value="Khác">Khoản Thu Khác</option>
+                        </>
+                      ) : (
+                        <>
+                          <option value="Ăn uống">Ăn uống 🥤</option>
+                          <option value="Di chuyển">Di chuyển 🛵</option>
+                          <option value="Mua sắm">Mua sắm 🛍️</option>
+                          <option value="Nhà ở & Hóa đơn">Nhà ở & Hóa đơn 🏠</option>
+                          <option value="Học tập">Học tập 📚</option>
+                          <option value="Giải trí">Giải trí 🎉</option>
+                          <option value="Sức khỏe">Sức khỏe 💪</option>
+                          <option value="Khác">Mục Chi Khác 💸</option>
+                        </>
+                      )}
+                    </select>
+                  </div>
+                </div>
+
+                {/* Note description input */}
+                <div className="space-y-1">
+                  <label className="text-[10px] uppercase font-bold tracking-wider text-slate-500">Nội dung ghi chú</label>
+                  <input
+                    type="text"
+                    required
+                    placeholder={manualType === "income" ? "Ví dụ: Lương tháng 6, được bố cho, thưởng nóng..." : "Ví dụ: Đi bún chả, nạp thẻ game, mua quần áo..."}
+                    value={manualNote}
+                    onChange={(e) => setManualNote(e.target.value)}
+                    className="w-full text-xs p-3 bg-slate-950 border border-slate-850 rounded-xl leading-relaxed text-slate-100 focus:outline-none focus:border-indigo-500 transition placeholder:text-slate-750 font-medium"
+                  />
+                </div>
+
+                <button
+                  type="submit"
+                  className="w-full py-3 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-500 transition text-xs font-bold flex items-center justify-center gap-2 border border-indigo-750 shadow-lg shadow-indigo-600/15 cursor-pointer text-white"
+                >
+                  <CheckCircle className="w-4 h-4 text-emerald-400" />
+                  <span>Xác nhận Ghi Sổ ngay ({manualType === "income" ? "Khoản Thu" : "Khoản Chi"})</span>
+                </button>
+              </form>
+            )}
           </div>
+
 
           {/* AI mascot feedback bubble chat */}
           <AIBuddyAvatar 
