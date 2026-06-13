@@ -92,6 +92,12 @@ export default function App() {
   const [manualNote, setManualNote] = useState<string>("");
   const [manualType, setManualType] = useState<"expense" | "income">("income");
 
+  const [hasSetInitialBalance, setHasSetInitialBalance] = useState<boolean>(() => {
+    return localStorage.getItem("has_set_initial_balance") === "true";
+  });
+  const [onboardingBalance, setOnboardingBalance] = useState<string>("5.000.000");
+  const [onboardingBudget, setOnboardingBudget] = useState<string>("8.000.000");
+
   const isInIframe = typeof window !== "undefined" && window.self !== window.top;
 
   const recognitionRef = useRef<any>(null);
@@ -134,8 +140,13 @@ export default function App() {
 
     if (savedProfile) {
       setUserProfile(JSON.parse(savedProfile));
+      setHasSetInitialBalance(true);
+      localStorage.setItem("has_set_initial_balance", "true");
     } else {
       setUserProfile(INITIAL_PROFILE);
+      if (localStorage.getItem("has_set_initial_balance") !== "true") {
+        setHasSetInitialBalance(false);
+      }
     }
 
     if (savedTx) {
@@ -266,6 +277,7 @@ export default function App() {
             setUserProfile(profileToUse);
             setTransactions(txToUse);
             setGoals(goalsToUse);
+            setHasSetInitialBalance(true);
 
             saveStateLocally(profileToUse, txToUse, goalsToUse);
 
@@ -289,6 +301,7 @@ export default function App() {
               setUserProfile(profileToUse);
               setTransactions(txToUse);
               setGoals(goalsToUse);
+              setHasSetInitialBalance(true);
 
               saveStateLocally(profileToUse, txToUse, goalsToUse);
 
@@ -314,6 +327,7 @@ export default function App() {
     localStorage.setItem("expense_tracker_profile", JSON.stringify(newProfile));
     localStorage.setItem("expense_tracker_tx", JSON.stringify(newTx));
     localStorage.setItem("expense_tracker_goals", JSON.stringify(newGoals));
+    localStorage.setItem("has_set_initial_balance", "true");
   };
 
   // ---------------------------------------------------------------------------
@@ -558,6 +572,24 @@ export default function App() {
     }
   };
 
+  const handleOnboardingSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const balanceVal = Number(onboardingBalance.replace(/[^0-9]/g, "")) || 0;
+    const budgetVal = Number(onboardingBudget.replace(/[^0-9]/g, "")) || 8000000;
+
+    const newProfile: UserProfile = {
+      total_balance: balanceVal,
+      currency: "VND",
+      monthly_budget: budgetVal
+    };
+
+    localStorage.setItem("has_set_initial_balance", "true");
+    setHasSetInitialBalance(true);
+    await syncDataInLocalStorageAndDrive(newProfile, transactions, goals);
+    showToast(`Đã thiết lập số dư bắt đầu là ${balanceVal.toLocaleString("vi-VN")} VND thành công!`, "success");
+    setAiReply(`🎉 Chào mừng ní đã đến với Bét-Phờ-Ren Tài Chính! Tui đã cài đặt số dư hiện tại của ní là ${balanceVal.toLocaleString("vi-VN")} VND rùi nhá. Ví sẵn sàng, lên đường săn deal hời thui nào ní ơi! 🚀`);
+  };
+
   // ---------------------------------------------------------------------------
   // Action Event Dispatchers
   // ---------------------------------------------------------------------------
@@ -643,6 +675,124 @@ export default function App() {
   }, {});
 
   const totalExpenseSum = (Object.values(categorySummary) as number[]).reduce((a: number, b: number) => a + b, 0);
+
+  if (!hasSetInitialBalance) {
+    return (
+      <div className="min-h-screen bg-slate-950 text-slate-100 font-sans flex items-center justify-center p-4 selection:bg-emerald-500/30 selection:text-emerald-300 relative overflow-hidden">
+        {/* Decorative background glow elements */}
+        <div className="absolute top-1/4 left-1/4 -translate-x-1/2 -translate-y-1/2 w-96 h-96 bg-emerald-500/10 rounded-full blur-[120px] pointer-events-none" />
+        <div className="absolute bottom-1/4 right-1/4 translate-x-1/2 translate-y-1/2 w-96 h-96 bg-indigo-550/10 rounded-full blur-[120px] pointer-events-none" />
+
+        <div className="w-full max-w-md relative z-10">
+          <div className="text-center mb-6 space-y-3">
+            <div className="inline-flex w-16 h-16 rounded-3xl bg-gradient-to-tr from-emerald-600 to-indigo-600 items-center justify-center shadow-2xl shadow-emerald-500/20 mb-1">
+              <Sparkles className="w-8 h-8 text-white animate-pulse" />
+            </div>
+            <div>
+              <h1 className="text-2xl font-black uppercase tracking-tight bg-gradient-to-r from-emerald-400 via-teal-300 to-indigo-400 bg-clip-text text-transparent">
+                Bét-Phờ-Ren Tài Chính 👋
+              </h1>
+              <p className="text-xs text-slate-400 mt-1 px-4 leading-relaxed">
+                Để bắt đầu hành trình quản lý chi tiêu mượt mà, hãy cài đặt số dư ban đầu trong cấu hình ví của ní nhé!
+              </p>
+            </div>
+          </div>
+
+          <div className="bg-slate-900/60 border border-slate-800/80 rounded-3xl p-6 shadow-2xl backdrop-blur-xl space-y-6">
+            <form onSubmit={handleOnboardingSubmit} className="space-y-5">
+              <div className="space-y-2">
+                <label className="text-xs uppercase font-extrabold tracking-widest text-emerald-400 font-mono flex items-center gap-1.5">
+                  <Coins className="w-4 h-4 text-emerald-400" />
+                  Số Dư Hiện Tại (VND)
+                </label>
+                <div className="relative">
+                  <input
+                    type="text"
+                    required
+                    autoFocus
+                    placeholder="VD: 5.000.000"
+                    value={onboardingBalance}
+                    onChange={(e) => {
+                      const cleaned = e.target.value.replace(/[^0-9]/g, "");
+                      setOnboardingBalance(cleaned ? Number(cleaned).toLocaleString("vi-VN") : "");
+                    }}
+                    className="w-full text-xl p-4 bg-slate-950 border border-slate-805 focus:border-indigo-500 rounded-2xl text-slate-100 focus:outline-none transition font-mono font-black placeholder:text-slate-700 pr-16"
+                  />
+                  <span className="absolute right-4 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-550 font-mono">
+                    VND
+                  </span>
+                </div>
+                
+                {/* Clean preset balance buttons */}
+                <div className="grid grid-cols-4 gap-2 pt-1">
+                  {["500.000", "2.000.000", "5.000.000", "10.000.000"].map((preset) => (
+                    <button
+                      key={preset}
+                      type="button"
+                      onClick={() => setOnboardingBalance(preset)}
+                      className="py-1.5 px-1 bg-slate-950/60 hover:bg-slate-900 text-[10px] font-mono font-bold text-slate-400 hover:text-slate-200 border border-slate-850/85 hover:border-slate-800 rounded-xl transition cursor-pointer"
+                    >
+                      {preset}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="space-y-2 pt-1 border-t border-slate-850/60">
+                <label className="text-xs uppercase font-extrabold tracking-widest text-indigo-400 font-mono flex items-center gap-1.5">
+                  <TrendingDown className="w-4 h-4 text-indigo-400" />
+                  Hạn Mức Chi Tiêu Tháng (VND)
+                </label>
+                <div className="relative">
+                  <input
+                    type="text"
+                    required
+                    placeholder="VD: 8.000.000"
+                    value={onboardingBudget}
+                    onChange={(e) => {
+                      const cleaned = e.target.value.replace(/[^0-9]/g, "");
+                      setOnboardingBudget(cleaned ? Number(cleaned).toLocaleString("vi-VN") : "");
+                    }}
+                    className="w-full text-base p-3 bg-slate-950 border border-slate-850 focus:border-indigo-500 rounded-xl text-slate-100 focus:outline-none transition font-mono font-bold placeholder:text-slate-700 pr-16"
+                  />
+                  <span className="absolute right-4 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-500 font-mono">
+                    VND
+                  </span>
+                </div>
+                <p className="text-[10px] text-slate-400 italic">
+                  *Bét-Phờ-Ren sẽ dùng hạn mức chi tiêu này để tính toán mốc cảnh báo nguy cơ cạn ví nha!
+                </p>
+              </div>
+
+              <button
+                type="submit"
+                className="w-full py-4 px-5 rounded-2xl bg-indigo-600 hover:bg-indigo-500 transition-all font-black text-xs flex items-center justify-center gap-2 border border-indigo-700/50 shadow-xl shadow-indigo-600/15 text-white cursor-pointer mt-2"
+              >
+                <span>Xác nhận & Vào ứng dụng ngay</span>
+                <ArrowRight className="w-4 h-4" />
+              </button>
+            </form>
+
+            <div className="pt-4 border-t border-slate-850 bg-slate-950/20 rounded-b-2xl flex flex-col items-center gap-2.5">
+              <span className="text-[11px] text-slate-400 font-medium">Bạn đã có bản sao lưu trên Drive?</span>
+              <button
+                type="button"
+                onClick={handleGoogleSignIn}
+                className="w-full py-2 px-3 bg-slate-900 border border-slate-850 hover:border-indigo-500 hover:bg-slate-950 rounded-xl text-xs flex items-center justify-center gap-2 text-indigo-300 font-bold transition cursor-pointer"
+              >
+                <Database className="w-3.5 h-3.5" />
+                <span>Khôi phục dữ liệu từ Google Drive</span>
+              </button>
+            </div>
+          </div>
+          
+          <div className="text-center mt-6 text-[10px] text-slate-505 font-mono">
+            Vui lòng cài đặt số dư ban đầu để bét-phờ-ren hỗ trợ tính toán chính xác số dư hiện tại của bạn nhé.
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 font-sans selection:bg-emerald-500/30 selection:text-emerald-300">
@@ -756,9 +906,23 @@ export default function App() {
             </div>
             
             <div className="relative z-10 space-y-1">
-              <span className="text-[10px] uppercase font-bold tracking-widest text-emerald-400 font-mono">
-                Số Dư Dự Kiến
-              </span>
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] uppercase font-bold tracking-widest text-emerald-400 font-mono">
+                  Số Dư Dự Kiến
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setOnboardingBalance(userProfile.total_balance.toLocaleString("vi-VN"));
+                    setOnboardingBudget(userProfile.monthly_budget.toLocaleString("vi-VN"));
+                    setHasSetInitialBalance(false);
+                  }}
+                  className="text-[10px] text-indigo-400 hover:text-indigo-300 flex items-center gap-1 cursor-pointer font-bold bg-slate-950/60 p-1 px-2.5 border border-slate-850 rounded-lg hover:bg-slate-950 transition-all font-sans"
+                  title="Thay đổi cài đặt số dư ban đầu"
+                >
+                  <RefreshCw className="w-3 h-3 text-indigo-405" /> Cài đặt số dư
+                </button>
+              </div>
               <h2 className="text-3xl font-black text-white leading-none tracking-tight">
                 {calculatedBalance.toLocaleString("vi-VN")} <span className="text-lg font-bold text-slate-400">VND</span>
               </h2>
